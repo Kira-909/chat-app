@@ -1,18 +1,23 @@
 const express = require('express');
 const http = require('http');
 const socketIO = require('socket.io');
-const sqlite3 = require('sqlite3').verbose();  // Add SQLite
+const sqlite3 = require('better-sqlite3'); // Using better-sqlite3 instead of sqlite3
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIO(server);
 
-const db = new sqlite3.Database('./chat-app.db');  // Create a database
+// Create or open the SQLite database
+const db = new sqlite3('./chat-app.db', { verbose: console.log });
 
 // Create table if it doesn't exist
-db.serialize(() => {
-  db.run("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)");
-});
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`).run();
 
 const PORT = process.env.PORT || 3000;
 
@@ -23,22 +28,14 @@ io.on('connection', (socket) => {
   console.log('A user connected');
 
   // Send previous messages to the user
-  db.all("SELECT message, timestamp FROM messages ORDER BY timestamp", (err, rows) => {
-    if (err) {
-      console.error('Error retrieving messages from DB:', err);
-    } else {
-      socket.emit('previous messages', rows);  // Send all previous messages
-    }
-  });
+  const rows = db.prepare('SELECT message, timestamp FROM messages ORDER BY timestamp').all();
+  socket.emit('previous messages', rows); // Send all previous messages
 
   // Save chat messages to DB and broadcast
   socket.on('chat message', (msg) => {
     // Save the message
-    db.run("INSERT INTO messages (message) VALUES (?)", [msg], function(err) {
-      if (err) {
-        console.error('Error saving message to DB:', err);
-      }
-    });
+    const insert = db.prepare('INSERT INTO messages (message) VALUES (?)');
+    insert.run(msg);
     
     // Broadcast to all users
     io.emit('chat message', msg);
